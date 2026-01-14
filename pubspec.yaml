@@ -7,20 +7,22 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # Significance: Communicates with S23 Android hardware to intercept bank SMS alerts locally.
-  telephony: ^0.2.0 
-  # Use Case: Professional formatting for Indian Rupees (₹) and localized date strings.
-  intl: ^0.18.1
-  # Essence: A high-performance charting library that renders graphs on-device without internet.
+  # Package: telephony | Use Case: SMS listening and background handling
+  telephony: ^0.2.0
+  # Package: fl_chart | Use Case: High-performance line charts for trends
   fl_chart: ^0.66.0
-  # Significance: The "Auto-Save" engine. Stores JSON data in the app's private internal storage.
+  # Package: intl | Use Case: Currency and date formatting
+  intl: ^0.19.0
+  # Package: shared_preferences | Use Case: Persistent local storage
   shared_preferences: ^2.2.2
-  # Use Case: Triggers the native Android 14 share sheet to export your CSV files to Excel/Email.
-  share_plus: ^10.1.0
-  # Essence: Finds safe, non-public directory paths on the S23 Ultra for file generation.
-  path_provider: ^2.1.0
-  # Use Case: Secure S23 Biometric hardware access (Fingerprint/PIN).
+  # Package: local_auth | Use Case: Biometric/Fingerprint security
   local_auth: ^2.1.6
+  # Package: path_provider | Use Case: Finding local paths for CSV storage
+  path_provider: ^2.1.2
+  # Package: share_plus | Use Case: Exporting CSV to other apps (Email/WhatsApp)
+  share_plus: ^7.2.2
+  # Added for the Background Popup experience
+  flutter_local_notifications: ^17.0.0
 # The following defines the version and build number for your application.
 # A version number is three numbers separated by dots, like 1.2.43
 # followed by an optional build number separated by a +.

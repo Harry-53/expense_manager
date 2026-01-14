@@ -1,297 +1,334 @@
-import 'dart:convert'; // Use Case: Converting Transaction objects to JSON strings for Auto-Save.
-import 'dart:io';
+import 'dart:convert'; // Logic: Converting data objects to JSON for local persistence.
 import 'package:flutter/material.dart';
-import 'package:telephony/telephony.dart'; // Significance: Accesses S23 SMS hardware locally.
-import 'package:intl/intl.dart';
-import 'package:fl_chart/fl_chart.dart';
-import 'package:share_plus/share_plus.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // Essence: Offline-only data persistence.
+import 'package:flutter/services.dart'; // Logic: S23 Ultra Haptic engine and system interface control.
+import 'package:telephony/telephony.dart'; // Logic: Intercepting bank SMS and scanning history.
+import 'package:intl/intl.dart'; // Logic: Professional date and currency (₹) formatting.
+import 'package:fl_chart/fl_chart.dart'; // Logic: High-performance data visualization for trends.
+import 'package:shared_preferences/shared_preferences.dart'; // Logic: Secured local key-value storage.
+import 'package:local_auth/local_auth.dart'; // Logic: Biometric (Fingerprint) and S23 PIN fallback security.
 
-void main() => runApp(const PrivateExpenseApp());
+/// Logic: Text Extension | Purpose: Title casing for merchant names (e.g. 'UBER' to 'Uber').
+extension StringCasingExtension on String {
+  String toTitleCase() => split(' ')
+      .map((word) => word.isNotEmpty ? word[0].toUpperCase() + word.substring(1).toLowerCase() : "")
+      .join(' ');
+}
 
-/// Root Widget: Optimized for S23 Ultra's AMOLED display (Deep Blacks).
-class PrivateExpenseApp extends StatelessWidget {
-  const PrivateExpenseApp({super.key});
+/// Function: onBackgroundMessage | Logic: Required top-level handler for SMS when app is closed.
+@pragma('vm:entry-point')
+onBackgroundMessage(SmsMessage message) {
+  debugPrint("S23 Capture: ${message.body}");
+}
+
+void main() {
+  // Logic: Ensure the Flutter framework is ready for hardware plugins (SMS/Auth).
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const FinancialVaultApp());
+}
+
+class FinancialVaultApp extends StatelessWidget {
+  const FinancialVaultApp({super.key});
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(useMaterial3: true).copyWith(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.cyanAccent, brightness: Brightness.dark),
+      theme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: Colors.black, // Essence: Optimized for S23 Ultra AMOLED display.
+        colorScheme: const ColorScheme.dark(primary: Colors.cyanAccent),
       ),
-      home: const ExpenseDashboard(),
+      home: const AuthScreen(),
     );
   }
 }
 
-/// Transaction Blueprint: Data structure for individual expense logs.
-class Transaction {
-  final String id; // Use Case: Unique identifier for stable list deletion.
-  final double amount;
-  final String merchant;
-  final String category;
-  final DateTime date;
+// --- CUSTOM UI: RUPEE LOADER ---
 
-  Transaction({
-    required this.id, 
-    required this.amount, 
-    required this.merchant, 
-    required this.category, 
-    required this.date
-  });
-
-  // Essence: Serializes the object into a Map for local JSON storage.
-  Map<String, dynamic> toJson() => {
-    'id': id, 'amount': amount, 'merchant': merchant, 'category': category, 'date': date.toIso8601String(),
-  };
-
-  // Essence: Deserializes JSON Map back into a Transaction object.
-  factory Transaction.fromJson(Map<String, dynamic> json) => Transaction(
-    id: json['id'] ?? DateTime.now().toString(),
-    amount: json['amount'],
-    merchant: json['merchant'],
-    category: json['category'],
-    date: DateTime.parse(json['date']),
-  );
-}
-
-class ExpenseDashboard extends StatefulWidget {
-  const ExpenseDashboard({super.key});
+/// Widget: RupeeLoader | Use Case: Pulsating ₹ symbol used during information loading or sync.
+class RupeeLoader extends StatefulWidget {
+  const RupeeLoader({super.key});
   @override
-  State<ExpenseDashboard> createState() => _ExpenseDashboardState();
+  State<RupeeLoader> createState() => _RupeeLoaderState();
 }
 
-class _ExpenseDashboardState extends State<ExpenseDashboard> {
-  // --- CORE STATE VARIABLES ---
-  final Telephony telephony = Telephony.instance; // Logic: S23 Local hardware service.
-  final List<Transaction> _allTransactions = []; // Significance: The master source of truth for data.
-  List<Transaction> _filteredTransactions = []; // Significance: The current view (changes via search).
-  final NumberFormat inr = NumberFormat.currency(locale: 'en_IN', symbol: '₹'); // Use Case: INR formatting.
-  final List<String> _categories = ['Food', 'Bills', 'Petrol', 'UPI', 'Shopping'];
-  final TextEditingController _searchController = TextEditingController(); // Essence: Monitors search input.
-  double _monthlyBudget = 50000.0;
-
+class _RupeeLoaderState extends State<RupeeLoader> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
   @override
   void initState() {
     super.initState();
-    _loadFromDisk(); // Use Case: Restore data on boot.
-    _initSMSListener(); // Significance: Start tracking bank SMS alerts.
+    // Logic: Constant pulse effect (1.2 seconds duration).
+    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 1200))..repeat(reverse: true);
   }
-
-  // --- LOGIC: AUTO-SAVE & PERSISTENCE ---
-
-  /// Significance: Writes data to the S23 Ultra internal flash storage as JSON.
-  Future<void> _saveToDisk() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String encoded = json.encode(_allTransactions.map((t) => t.toJson()).toList());
-    await prefs.setString('s23_offline_vault', encoded);
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
-
-  /// Significance: Reads the JSON string and populates the UI on startup.
-  Future<void> _loadFromDisk() async {
-    final prefs = await SharedPreferences.getInstance();
-    final String? data = prefs.getString('s23_offline_vault');
-    if (data != null) {
-      final List<dynamic> decoded = json.decode(data);
-      setState(() {
-        _allTransactions.addAll(decoded.map((m) => Transaction.fromJson(m)).toList());
-        _filteredTransactions = _allTransactions; // Sync current view.
-      });
-    }
-  }
-
-  // --- LOGIC: SEARCH & DELETE ---
-
-  /// Significance: Filters the list by Merchant name as the user types.
-  void _runSearch(String query) {
-    setState(() {
-      _filteredTransactions = _allTransactions
-          .where((tx) => tx.merchant.toLowerCase().contains(query.toLowerCase()))
-          .toList();
-    });
-  }
-
-  /// Use Case: Removes a mistake or test transaction.
-  /// Logic: Deletes from the master list, syncs view, and updates the S23 disk.
-  void _deleteTransaction(String id) {
-    setState(() {
-      _allTransactions.removeWhere((tx) => tx.id == id);
-      _filteredTransactions = List.from(_allTransactions); // Update view.
-    });
-    _saveToDisk(); // Significance: Ensure deletion is permanent on disk.
-    
-    // UI Feedback for S23 users
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Transaction deleted"), duration: Duration(seconds: 1)),
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: Tween(begin: 0.8, end: 1.2).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut)),
+      child: const Text("₹", style: TextStyle(fontSize: 80, color: Colors.cyanAccent, fontWeight: FontWeight.bold, shadows: [Shadow(color: Colors.cyanAccent, blurRadius: 25)])),
     );
   }
+}
 
-  // --- LOGIC: SMS AUTOMATION ---
+// --- DATA STRUCTURE ---
 
-  /// Essence: Requests S23 permissions and attaches the background listener.
-  void _initSMSListener() async {
-    bool? permission = await telephony.requestPhoneAndSmsPermissions;
-    if (permission == true) {
-      telephony.listenIncomingSms(
-        onNewMessage: (SmsMessage message) => _processSms(message.body ?? ""),
-        listenInBackground: true, // App tracks even when screen is locked.
+class Transaction {
+  final String id; // Logic: Unique ID (SMS timestamp) to prevent duplicate entries.
+  final double amount;
+  final String merchant;
+  final String category;
+  final String method;
+  final DateTime date;
+  final bool isCredit;
+
+  Transaction({
+    required this.id, required this.amount, required this.merchant,
+    required this.category, required this.method, required this.date,
+    required this.isCredit,
+  });
+
+  Map<String, dynamic> toMap() => {
+    'id': id, 'amount': amount, 'merchant': merchant, 'category': category,
+    'method': method, 'date': date.toIso8601String(), 'isCredit': isCredit,
+  };
+
+  factory Transaction.fromMap(Map<String, dynamic> map) => Transaction(
+    id: map['id'], amount: map['amount'], merchant: map['merchant'], category: map['category'],
+    method: map['method'], date: DateTime.parse(map['date']), isCredit: map['isCredit'] ?? false,
+  );
+}
+
+// --- MAIN SCREENS ---
+
+class AuthScreen extends StatefulWidget {
+  const AuthScreen({super.key});
+  @override
+  State<AuthScreen> createState() => _AuthScreenState();
+}
+
+class _AuthScreenState extends State<AuthScreen> {
+  final LocalAuthentication auth = LocalAuthentication();
+  bool _isLoading = false;
+
+  /// Function: _login | Logic: S23 Fingerprint/Face sensors with Device PIN fallback.
+  Future<void> _login() async {
+    setState(() => _isLoading = true);
+    try {
+      bool didAuth = await auth.authenticate(
+        localizedReason: 'Identity verification for Vault access',
+        options: const AuthenticationOptions(stickyAuth: true, biometricOnly: false),
       );
+      if (didAuth && mounted) {
+        HapticFeedback.heavyImpact(); // Essence: Confirming access with haptics.
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (c) => const Dashboard()));
+      }
+    } catch (e) {
+      debugPrint("Auth Error: $e");
+    } finally {
+      setState(() => _isLoading = false);
     }
-  }
-
-  void _processSms(String body) {
-    RegExp reg = RegExp(r"(?:INR|Rs\.?|₹)\s?([0-9,]+(?:\.[0-9]{2})?)");
-    var match = reg.firstMatch(body);
-    if (match != null) {
-      double amt = double.parse(match.group(1)!.replaceAll(',', ''));
-      String merch = body.contains("at ") ? body.split("at ")[1].split(" ")[0] : "Bank UPI";
-      _showConfirmDialog(amt, merch);
-    }
-  }
-
-  // --- UI COMPONENTS ---
-
-  /// Significance: Generates a Pie Chart based on category-sum logic.
-  Widget _buildPieChart() {
-    return SizedBox(
-      height: 180,
-      child: PieChart(PieChartData(sections: _categories.map((c) {
-        double sum = _allTransactions.where((t) => t.category == c).fold(0, (p, t) => p + t.amount);
-        return PieChartSectionData(
-          value: sum == 0 ? 0.01 : sum,
-          title: sum > 0 ? c : "",
-          color: Colors.primaries[_categories.indexOf(c) % Colors.primaries.length],
-          radius: 40,
-        );
-      }).toList())),
-    );
-  }
-
-  /// Logic: Central function to add a record and trigger Auto-Save.
-  void _addEntry(double a, String m, String c) {
-    setState(() {
-      final newTx = Transaction(
-        id: DateTime.now().millisecondsSinceEpoch.toString(), 
-        amount: a, merchant: m, category: c, date: DateTime.now()
-      );
-      _allTransactions.insert(0, newTx);
-      _filteredTransactions = _allTransactions;
-    });
-    _saveToDisk(); // Significance: Permanent offline save.
   }
 
   @override
   Widget build(BuildContext context) {
-    double total = _allTransactions.fold(0, (sum, t) => sum + t.amount);
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Private Manager"),
-        actions: [IconButton(icon: const Icon(Icons.share), onPressed: _exportCSV)],
-      ),
-      body: Column(
-        children: [
-          const SizedBox(height: 10),
-          _buildPieChart(),
-          _buildBudgetProgress(total),
-          Expanded(child: _buildTransactionList()),
-          _buildBottomSearch(), // Search at the bottom for S23 ergonomics.
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(onPressed: _showManualForm, child: const Icon(Icons.add)),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endDocked,
-    );
-  }
-
-  // --- LIST WITH SWIPE-TO-DELETE ---
-
-  Widget _buildTransactionList() {
-    return ListView.builder(
-      itemCount: _filteredTransactions.length,
-      itemBuilder: (ctx, i) {
-        final tx = _filteredTransactions[i];
-        // Significance: Allows the user to "Dismiss" (Delete) items via a swipe gesture.
-        return Dismissible(
-          key: Key(tx.id),
-          direction: DismissDirection.endToStart, // Swipe Left to delete.
-          background: Container(
-            color: Colors.redAccent,
-            alignment: Alignment.centerRight,
-            padding: const EdgeInsets.only(right: 20),
-            child: const Icon(Icons.delete, color: Colors.white),
-          ),
-          onDismissed: (dir) => _deleteTransaction(tx.id),
-          child: ListTile(
-            title: Text(tx.merchant),
-            subtitle: Text(tx.category),
-            trailing: Text(inr.format(tx.amount), style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
-          ),
-        );
-      },
-    );
-  }
-
-  // --- OTHER UI WIDGETS ---
-
-  Widget _buildBudgetProgress(double total) {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: LinearProgressIndicator(
-        value: (total / _monthlyBudget).clamp(0, 1),
-        minHeight: 12,
-        borderRadius: BorderRadius.circular(10),
-        color: total > _monthlyBudget ? Colors.redAccent : Colors.cyanAccent,
-      ),
-    );
-  }
-
-  Widget _buildBottomSearch() {
-    return BottomAppBar(
-      height: 70,
-      child: TextField(
-        controller: _searchController,
-        onChanged: _runSearch,
-        decoration: InputDecoration(
-          hintText: "Search merchant...",
-          prefixIcon: const Icon(Icons.search),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      body: Center(
+        child: _isLoading ? const RupeeLoader() : IconButton(
+          icon: const Icon(Icons.fingerprint, size: 80, color: Colors.cyanAccent),
+          onPressed: _login,
         ),
       ),
     );
   }
+}
 
-  void _showConfirmDialog(double a, String m) {
-    showDialog(context: context, builder: (ctx) => AlertDialog(
-      title: const Text("SMS Detected"),
-      content: Text("Log ₹$a at $m?"),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("No")),
-        ElevatedButton(onPressed: () { _addEntry(a, m, "UPI"); Navigator.pop(ctx); }, child: const Text("Yes")),
-      ],
-    ));
+class Dashboard extends StatefulWidget {
+  const Dashboard({super.key});
+  @override
+  State<Dashboard> createState() => _DashboardState();
+}
+
+class _DashboardState extends State<Dashboard> {
+  final Telephony telephony = Telephony.instance;
+  List<Transaction> _vaultItems = [];
+  bool _isSyncing = false;
+  String _filter = "All";
+  bool _isPieView = false; // Logic: Toggles between line trend and category breakdown.
+
+  final List<String> _cats = ["Food", "Shopping", "Bills", "Travel", "Income", "Other"];
+  final List<String> _methods = ["UPI", "Credit Card", "Debit Card", "Cash", "Net Banking"];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFromLocal(); // Logic: Load stored entries first.
+    _setupSMS(); // Logic: Register background SMS listener.
   }
 
-  void _showManualForm() {
-    double a = 0; String m = ""; String? c = _categories[0];
+  // --- BUSINESS LOGIC: SMS & DATA ---
+
+  void _setupSMS() async {
+    bool? permission = await telephony.requestPhoneAndSmsPermissions;
+    if (permission == true) {
+      telephony.listenIncomingSms(
+        onNewMessage: (msg) => _processMessage(msg.body ?? "", msg.date.toString()),
+        listenInBackground: true,
+        onBackgroundMessage: onBackgroundMessage,
+      );
+    }
+  }
+
+  Future<void> _syncHistory() async {
+    setState(() => _isSyncing = true);
+    HapticFeedback.mediumImpact();
+    List<SmsMessage> messages = await telephony.getInboxSms(columns: [SmsColumn.BODY, SmsColumn.DATE]);
+    for (var msg in messages) {
+      _processMessage(msg.body ?? "", msg.date.toString(), silent: true);
+    }
+    await _saveToLocal();
+    setState(() => _isSyncing = false);
+  }
+
+  void _processMessage(String body, String uid, {bool silent = false}) {
+    // Logic: Regex identifies ₹ symbol and captures the amount.
+    final RegExp reg = RegExp(r"(?:Rs|INR|₹)\.?\s?([0-9,]+(?:\.[0-9]{2})?)");
+    final match = reg.firstMatch(body);
+
+    if (match != null) {
+      double amt = double.parse(match.group(1)!.replaceAll(',', ''));
+      bool isCr = body.toLowerCase().contains("credited") || body.toLowerCase().contains("received");
+      
+      // Logic: DEDUPLICATION check.
+      if (!_vaultItems.any((e) => e.id == uid)) {
+        _addTransaction(amt, "Bank Alert", isCr ? "Income" : "Other", "Bank", isCr, manualId: uid, silent: silent);
+      }
+    }
+  }
+
+  // --- PERSISTENCE ---
+
+  Future<void> _saveToLocal() async {
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setString('s23_final_vault_v5', jsonEncode(_vaultItems.map((e) => e.toMap()).toList()));
+  }
+
+  Future<void> _loadFromLocal() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? raw = prefs.getString('s23_final_vault_v5');
+    if (raw != null) {
+      setState(() {
+        _vaultItems = (jsonDecode(raw) as List).map((e) => Transaction.fromMap(e)).toList();
+      });
+    }
+  }
+
+  void _addTransaction(double a, String m, String c, String meth, bool cr, {String? manualId, bool silent = false}) {
+    final t = Transaction(
+      id: manualId ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      amount: a, merchant: m.toTitleCase(), category: c.toTitleCase(),
+      method: meth, date: DateTime.now(), isCredit: cr,
+    );
+    setState(() => _vaultItems.insert(0, t));
+    if (!silent) {
+      _saveToLocal();
+      HapticFeedback.lightImpact();
+    }
+  }
+
+  // --- UI BUILDING ---
+
+  @override
+  Widget build(BuildContext context) {
+    List<Transaction> filtered = _vaultItems.where((e) {
+      if (_filter == "Credit") return e.isCredit;
+      if (_filter == "Debit") return !e.isCredit;
+      return true;
+    }).toList();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("PRIVATE VAULT", style: TextStyle(fontSize: 14, letterSpacing: 3)),
+        actions: [
+          IconButton(icon: Icon(_isPieView ? Icons.analytics : Icons.pie_chart), onPressed: () => setState(() => _isPieView = !_isPieView)),
+          IconButton(icon: const Icon(Icons.sync_rounded), onPressed: _syncHistory),
+        ],
+      ),
+      body: _isSyncing ? const Center(child: RupeeLoader()) : Column(
+        children: [
+          _isPieView ? _buildPie() : _buildTrendLine(),
+          _buildFilterRow(),
+          Expanded(child: _buildListView(filtered)),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(onPressed: _showManualSheet, child: const Icon(Icons.add_circle)),
+    );
+  }
+
+  Widget _buildTrendLine() {
+    return Container(
+      height: 180, padding: const EdgeInsets.all(20),
+      child: LineChart(LineChartData(
+        gridData: const FlGridData(show: false),
+        titlesData: const FlTitlesData(show: false),
+        borderData: FlBorderData(show: false),
+        lineBarsData: [
+          LineChartBarData(
+            spots: _vaultItems.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.amount)).toList().reversed.toList(),
+            isCurved: true, color: Colors.cyanAccent, barWidth: 2, dotData: const FlDotData(show: false),
+          ),
+        ],
+      )),
+    );
+  }
+
+  Widget _buildPie() {
+    Map<String, double> map = {};
+    for (var e in _vaultItems) { map[e.category] = (map[e.category] ?? 0) + e.amount; }
+    return SizedBox(height: 180, child: PieChart(PieChartData(
+      sections: map.entries.map((ent) => PieChartSectionData(
+        value: ent.value, title: ent.key, radius: 45, color: Colors.cyanAccent.withOpacity(0.5),
+        titleStyle: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+      )).toList(),
+    )));
+  }
+
+  Widget _buildFilterRow() {
+    return Row(mainAxisAlignment: MainAxisAlignment.center, children: ["All", "Debit", "Credit"].map((f) => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: ChoiceChip(label: Text(f), selected: _filter == f, onSelected: (s) => setState(() => _filter = f)),
+    )).toList());
+  }
+
+  Widget _buildListView(List<Transaction> data) {
+    return ListView.builder(itemCount: data.length, itemBuilder: (context, i) {
+      final t = data[i];
+      return ListTile(
+        leading: Icon(Icons.payment, color: t.isCredit ? Colors.greenAccent : Colors.white54),
+        title: Text(t.merchant),
+        subtitle: Text("${t.category} • ${t.method} • ${DateFormat('d MMM').format(t.date)}"),
+        trailing: Text("₹${t.amount}", style: TextStyle(fontWeight: FontWeight.bold, color: t.isCredit ? Colors.greenAccent : Colors.white)),
+        onLongPress: () => setState(() { _vaultItems.removeAt(i); _saveToLocal(); }),
+      );
+    });
+  }
+
+  void _showManualSheet() {
+    double a = 0; String m = ""; String c = _cats[0]; String meth = _methods[0];
     showModalBottomSheet(context: context, isScrollControlled: true, builder: (ctx) => Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom, left: 20, right: 20, top: 20),
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        TextField(decoration: const InputDecoration(labelText: "INR Amount"), keyboardType: TextInputType.number, onChanged: (v) => a = double.tryParse(v) ?? 0),
-        TextField(decoration: const InputDecoration(labelText: "Merchant"), onChanged: (v) => m = v),
-        DropdownButtonFormField(value: c, items: _categories.map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(), onChanged: (v) => c = v as String?),
+        TextField(decoration: const InputDecoration(labelText: "Amount (₹)"), keyboardType: TextInputType.number, onChanged: (v) => a = double.tryParse(v) ?? 0),
+        TextField(decoration: const InputDecoration(labelText: "Merchant Name"), onChanged: (v) => m = v),
+        DropdownButtonFormField(value: c, items: _cats.map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(), onChanged: (v) => c = v as String, decoration: const InputDecoration(labelText: "Category")),
+        DropdownButtonFormField(value: meth, items: _methods.map((me) => DropdownMenuItem(value: me, child: Text(me))).toList(), onChanged: (v) => meth = v as String, decoration: const InputDecoration(labelText: "Payment Method")),
         const SizedBox(height: 20),
-        ElevatedButton(onPressed: () { _addEntry(a, m, c!); Navigator.pop(ctx); }, child: const Text("Save Locally")),
+        ElevatedButton(onPressed: () { _addTransaction(a, m, c, meth, c == "Income"); Navigator.pop(context); }, child: const Text("Commit to Vault")),
         const SizedBox(height: 20),
       ]),
     ));
-  }
-
-  void _exportCSV() async {
-    String csv = "Date,Merchant,Category,Amount\n";
-    for (var t in _allTransactions) csv += "${t.date},${t.merchant},${t.category},${t.amount}\n";
-    final dir = await getTemporaryDirectory();
-    final file = File("${dir.path}/S23_Expenses.csv");
-    await file.writeAsString(csv);
-    await Share.shareXFiles([XFile(file.path)], text: 'Financial Export');
   }
 }
